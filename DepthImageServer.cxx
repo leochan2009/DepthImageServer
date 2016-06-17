@@ -15,9 +15,9 @@
 =========================================================================*/
 
 #include <fstream>
-#include "api/svc/codec_api.h"
-#include "api/svc/codec_def.h"
-#include "api/svc/codec_app_def.h"
+#include "svc/codec_api.h"
+#include "svc/codec_def.h"
+#include "svc/codec_app_def.h"
 #include "utils/BufferedData.h"
 #include "utils/FileInputStream.h"
 #include "api/sha1.c"
@@ -32,19 +32,6 @@
 #include "igtlServerSocket.h"
 #include "igtlMultiThreader.h"
 #include <math.h>
-
-//VTK Includes
-#include "vtkPointSource.h"
-#include "vtkPNGReader.h"
-#include "vtkImageData.h"
-#include <vtkPointSource.h>
-#include <vtkPolyData.h>
-#include <vtkSmartPointer.h>
-#include <vtkPolyDataMapper.h>
-#include <vtkActor.h>
-#include <vtkRenderWindow.h>
-#include <vtkRenderer.h>
-#include <vtkRenderWindowInteractor.h>
 
 #define IGTL_IMAGE_HEADER_SIZE          72
 
@@ -74,7 +61,7 @@ struct EncodeFileParam {
   bool bEnableLtr;
   bool bCabac;
   int iTargetBitrate;
-  // unsigned short iMultipleThreadIdc;
+  unsigned short iMultipleThreadIdc;
 };
 
 void EncFileParamToParamExt (EncodeFileParam* pEncFileParam, SEncParamExt* pEnxParamExt) {
@@ -93,7 +80,7 @@ void EncFileParamToParamExt (EncodeFileParam* pEncFileParam, SEncParamExt* pEnxP
   //pEnxParamExt->uiIntraPeriod = 1;
   pEnxParamExt->iNumRefFrame = AUTO_REF_PIC_COUNT;
   if (pEncFileParam->eSliceMode != SM_SINGLE_SLICE && pEncFileParam->eSliceMode != SM_SIZELIMITED_SLICE) //SM_DYN_SLICE don't support multi-thread now
-    pEnxParamExt->iMultipleThreadIdc = 4;
+    pEnxParamExt->iMultipleThreadIdc = pEncFileParam->iMultipleThreadIdc; // For Adaptive QP encoding
   
   for (int i = 0; i < pEnxParamExt->iSpatialLayerNum; i++) {
     pEnxParamExt->sSpatialLayers[i].iVideoWidth     = pEncFileParam->iWidth;
@@ -116,7 +103,7 @@ void EncFileParamToParamExt (EncodeFileParam* pEncFileParam, SEncParamExt* pEnxP
 static EncodeFileParam kFileParamArray =
 {
   "res/Cisco_Absolute_Power_1280x720_30fps.yuv",
-  "dfd4666f9b90d5d77647454e2a06d546adac6a7c", CAMERA_VIDEO_REAL_TIME, 512, 384, 1.0f, SM_SIZELIMITED_SLICE, false, 1, false, false, true, 5000000
+  "dfd4666f9b90d5d77647454e2a06d546adac6a7c", CAMERA_VIDEO_REAL_TIME, 640, 480, 1.0f, SM_RASTER_SLICE, false, 1, true, false, true, 5000000, 4
 };
 
 int main(int argc, char* argv[])
@@ -136,6 +123,12 @@ int main(int argc, char* argv[])
 
   int    port     = atoi(argv[1]);
   polyFile = argv[2];
+  
+  /*FileInputStream fileStream;
+  fileStream.Open(polyFile.c_str());
+  BufferedData buf;
+  buf.SetLength (10000);
+  int readlen = fileStream.read(buf.data(), 10000);*/
   
     std::string inputFilename = argv[2];
     igtl::ServerSocket::Pointer serverSocket;
@@ -316,7 +309,7 @@ void* ThreadFunction(void* ptr)
     while (!td->stop)
     {
       
-      int frameSize = pEncParamExt.iPicWidth * pEncParamExt.iPicHeight;
+      int frameSize = pEncParamExt.iPicWidth * pEncParamExt.iPicHeight*3/2;
       
       BufferedData buf;
       buf.SetLength (frameSize);    
@@ -334,12 +327,11 @@ void* ThreadFunction(void* ptr)
       pic.iStride[0]   = pic.iPicWidth;
       pic.iStride[1]   = pic.iStride[2] = pic.iPicWidth >> 1;
       pic.pData[0]     = buf.data();
-      pic.pData[1]     = pic.pData[0]; //+ pEncParamExt.iPicWidth * pEncParamExt.iPicHeight;
-      pic.pData[2]     = pic.pData[1]; //+ (pEncParamExt.iPicWidth * pEncParamExt.iPicHeight >> 2);
+      pic.pData[1]     = pic.pData[0] + pEncParamExt.iPicWidth * pEncParamExt.iPicHeight;
+      pic.pData[2]     = pic.pData[1]+ (pEncParamExt.iPicWidth * pEncParamExt.iPicHeight >> 2);
       int iFrameIdx =0;
       fileStream.Open(fileName.c_str());
-      int readSize = fileStream.read (buf.data(), frameSize);
-      while (readSize == frameSize)
+      while (fileStream.read (buf.data(), frameSize) == frameSize && !td->stop)
       {
         pic.uiTimeStamp = (long long)(iFrameIdx * (1000 / pEncParamExt.fMaxFrameRate));
         iFrameIdx++;
